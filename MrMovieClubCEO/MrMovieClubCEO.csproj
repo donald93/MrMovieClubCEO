@@ -11,4 +11,8 @@
       <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.47.2" />
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\MrMovieClubCEO.Models\MrMovieClubCEO.Models.csproj" />
+    </ItemGroup>
+
 </Project>
