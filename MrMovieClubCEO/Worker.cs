@@ -1,4 +1,6 @@
 ﻿using System.Net;
+using System.Runtime.InteropServices.JavaScript;
+using System.Text;
 using Discord;
 using Discord.Net;
 using Discord.WebSocket;
@@ -41,6 +43,7 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
     private static CosmosClient _cosmosClient;
     private static Container _container;
     private static Container _guildContainer;
+    private static readonly Year5Puzzles Year5 = new();
 
     private static async Task CreateAndStartDiscordClient(string token)
     {
@@ -117,8 +120,7 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
         if (command.CommandName == "submit")
         {
             await command.RespondAsync($"Processing...");
-
-            var year5 = new Year5Puzzles();
+            
             var answer = command.Data.Options.FirstOrDefault(x => x.Name == "answer")?.Value.ToString();
 
             ItemResponse<Player> userResponse = default;
@@ -133,21 +135,24 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
             {
                 if (cosmosException.StatusCode == HttpStatusCode.NotFound)
                 {
-                    var correctAnswer = year5.Puzzles.First().Answers.Any(a =>
+                    var correctAnswer = Year5.Puzzles.First().Answers.Any(a =>
                         string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
 
                     if (correctAnswer)
                     {
                         await command.Channel.SendMessageAsync(
-                            $"Congratulations! You've completed the first puzzle. Here's your next challenge: {year5.Puzzles.ToArray()[1].Question}");
+                            $"Congratulations! You've completed the first puzzle. Here's your next challenge: {Year5.Puzzles.ToArray()[1].Question}");
 
                         await _container.UpsertItemAsync(new Player
                         {
                             Id = command.User.Id.ToString(),
                             Username = command.User.Username,
-                            CurrentPuzzle = year5.Puzzles.ToArray()[1].Id,
+                            CurrentPuzzle = Year5.Puzzles.ToArray()[1].Id,
+                            LastCompletedPuzzle = Year5.Puzzles.ToArray()[0].Id,
                             HasReceivedIntro = true
                         }, new PartitionKey(command.User.Id.ToString()));
+                        
+                        await UpdateLeaderboardAsync(command.User.Username);
                     }
                     else
                     {
@@ -159,30 +164,33 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
             }
 
             var usersPuzzleId = userResponse.Resource.CurrentPuzzle;
-            var currentPuzzle = year5.Puzzles.First(p => p.Id == usersPuzzleId);
+            var currentPuzzle = Year5.Puzzles.First(p => p.Id == usersPuzzleId);
             var wasAnswerCorrect =
                 currentPuzzle.Answers.Any(a => string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
 
             if (wasAnswerCorrect)
             {
-                var indexOfNextPuzzle = year5.Puzzles.ToList().IndexOf(currentPuzzle) + 1;
+                var indexOfNextPuzzle = Year5.Puzzles.ToList().IndexOf(currentPuzzle) + 1;
 
-                if (indexOfNextPuzzle >= year5.Puzzles.Count)
+                if (indexOfNextPuzzle >= Year5.Puzzles.Count)
                 {
                     await command.Channel.SendMessageAsync(
                         $"You are a worthy champion. Donald will be in touch with your prize.");
                     return;
                 }
 
-                var nextPuzzle = year5.Puzzles.ToArray()[indexOfNextPuzzle];
+                var nextPuzzle = Year5.Puzzles.ToArray()[indexOfNextPuzzle];
 
                 await command.Channel.SendMessageAsync(
                     $"Excellent job, here's you're next challenge:\n {nextPuzzle.Question}");
 
                 var player = userResponse.Resource;
                 player.CurrentPuzzle = nextPuzzle.Id;
+                player.LastCompletedPuzzle = currentPuzzle.Id;
 
                 await _container.UpsertItemAsync(player, new PartitionKey(player.Id));
+
+                await UpdateLeaderboardAsync(player.Username);
             }
             else
             {
@@ -221,7 +229,7 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
         }
     }
 
-    private async Task UpdateLeaderboard(string username)
+    private static async Task UpdateLeaderboardAsync(string username)
     {
         var guild = _guildContainer.GetItemLinqQueryable<GuildRegistration>(true)
             .FirstOrDefault();
@@ -230,6 +238,32 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
             .Where(p => p.HasReceivedIntro)
             .ToList();
 
+        var leaderboard = players
+            .Select(p => new
+            {
+                username = p.Username, index = Year5.Puzzles.ToList().FindIndex(puzzle => puzzle.Id == p.CurrentPuzzle)
+            })
+            .GroupBy(x => x.index)
+            .OrderDescending();
+
+        var stringBuilder = new StringBuilder();
+        stringBuilder.AppendLine();
+
+        foreach (var group in leaderboard)
+        {
+            stringBuilder.Append($"Puzzle #{group.Key}: ");
+            for(var i = 0; i < group.Count(); i++)
+            {
+                stringBuilder.Append($"{group.ElementAt(i).username}");
+                
+                if(i < group.Count() - 1)
+                {
+                    stringBuilder.Append(", ");
+                }
+            }
+            stringBuilder.AppendLine();
+        }
+        
         if (guild is null)
         {
             //handle error
@@ -237,7 +271,7 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
         }
         
         var registeredChannel = _discordClient.GetChannel(guild.ChannelId) as IMessageChannel;
-        await registeredChannel.SendMessageAsync("");
+        await registeredChannel.SendMessageAsync($"{username} just finished a puzzle! Here's the current leaderboard: {stringBuilder}");
 
     }
     
