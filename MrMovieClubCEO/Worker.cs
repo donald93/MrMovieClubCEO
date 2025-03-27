@@ -6,46 +6,33 @@ using Discord.Net;
 using Discord.WebSocket;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Options;
+using MrMovieClubCEO.Interfaces;
 using MrMovieClubCEO.Models.Configuration;
 using MrMovieClubCEO.Models.Database;
 using Newtonsoft.Json;
 
 namespace MrMovieClubCEO;
 
-public class Worker(ILogger<Worker> logger, IServiceProvider services) : BackgroundService
+public class Worker(ILogger<Worker> logger, IServiceProvider services, IMovieClubRepository repository)
+    : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             using var scope = services.CreateScope();
-            var cosmosOptions = scope.ServiceProvider.GetRequiredService<IOptions<CosmosDbOptions>>().Value;
             var discordOptions = scope.ServiceProvider.GetRequiredService<IOptions<DiscordOptions>>().Value;
 
-            _cosmosClient = CreateCosmosClient(cosmosOptions.ConnectionString);
-            var database =
-                await _cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosOptions.DatabaseName,
-                    cancellationToken: stoppingToken);
-            var containerResponse = await database.Database.CreateContainerIfNotExistsAsync(cosmosOptions.ContainerName,
-                "/id", cancellationToken: stoppingToken);
-            _container = containerResponse.Container;
-
-            var guildContainerResponse =
-                await database.Database.CreateContainerIfNotExistsAsync("GuildRegistrations", "/id",
-                    cancellationToken: stoppingToken);
-            _guildContainer = guildContainerResponse.Container;
+            await repository.InitializeAsync();
 
             await CreateAndStartDiscordClient(discordOptions.Token);
         }
     }
 
     private static DiscordSocketClient _discordClient;
-    private static CosmosClient _cosmosClient;
-    private static Container _container;
-    private static Container _guildContainer;
     private static readonly Year5Puzzles Year5 = new();
 
-    private static async Task CreateAndStartDiscordClient(string token)
+    private async Task CreateAndStartDiscordClient(string token)
     {
         _discordClient = new DiscordSocketClient();
         _discordClient.Log += Log;
@@ -115,55 +102,46 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
         }
     }
 
-    private static async Task SlashCommandHandler(SocketSlashCommand command)
+    private async Task SlashCommandHandler(SocketSlashCommand command)
     {
         if (command.CommandName == "submit")
         {
             await command.RespondAsync($"Processing...");
-            
+
             var answer = command.Data.Options.FirstOrDefault(x => x.Name == "answer")?.Value.ToString();
 
-            ItemResponse<Player> userResponse = default;
+            var player = await repository.GetPlayerAsync(command.User.Id.ToString());
 
-            try
+            if (player is null)
             {
-                userResponse =
-                    await _container.ReadItemAsync<Player>(command.User.Id.ToString(),
-                        new PartitionKey(command.User.Id.ToString()));
-            }
-            catch (CosmosException cosmosException)
-            {
-                if (cosmosException.StatusCode == HttpStatusCode.NotFound)
+                var correctAnswer = Year5.Puzzles.First()
+                    .Answers.Any(a => string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
+
+                if (correctAnswer)
                 {
-                    var correctAnswer = Year5.Puzzles.First().Answers.Any(a =>
-                        string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
+                    await command.Channel.SendMessageAsync(
+                        $"Congratulations! You've completed the first puzzle. Here's your next challenge: {Year5.Puzzles.ToArray()[1].Question}");
 
-                    if (correctAnswer)
+                    await repository.UpsertPlayerAsync(new Player
                     {
-                        await command.Channel.SendMessageAsync(
-                            $"Congratulations! You've completed the first puzzle. Here's your next challenge: {Year5.Puzzles.ToArray()[1].Question}");
+                        Id = command.User.Id.ToString(),
+                        Username = command.User.Username,
+                        CurrentPuzzle = Year5.Puzzles.ToArray()[1].Id,
+                        LastCompletedPuzzle = Year5.Puzzles.ToArray()[0].Id,
+                        HasReceivedIntro = true
+                    });
 
-                        await _container.UpsertItemAsync(new Player
-                        {
-                            Id = command.User.Id.ToString(),
-                            Username = command.User.Username,
-                            CurrentPuzzle = Year5.Puzzles.ToArray()[1].Id,
-                            LastCompletedPuzzle = Year5.Puzzles.ToArray()[0].Id,
-                            HasReceivedIntro = true
-                        }, new PartitionKey(command.User.Id.ToString()));
-                        
-                        await UpdateLeaderboardAsync(command.User.Username);
-                    }
-                    else
-                    {
-                        await command.Channel.SendMessageAsync($"Not quite, try again!");
-                    }
-
-                    return;
+                    await UpdateLeaderboardAsync(command.User.Username);
                 }
+                else
+                {
+                    await command.Channel.SendMessageAsync($"Not quite, try again!");
+                }
+
+                return;
             }
 
-            var usersPuzzleId = userResponse.Resource.CurrentPuzzle;
+            var usersPuzzleId = player.CurrentPuzzle;
             var currentPuzzle = Year5.Puzzles.First(p => p.Id == usersPuzzleId);
             var wasAnswerCorrect =
                 currentPuzzle.Answers.Any(a => string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
@@ -184,11 +162,10 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
                 await command.Channel.SendMessageAsync(
                     $"Excellent job, here's you're next challenge:\n {nextPuzzle.Question}");
 
-                var player = userResponse.Resource;
                 player.CurrentPuzzle = nextPuzzle.Id;
                 player.LastCompletedPuzzle = currentPuzzle.Id;
 
-                await _container.UpsertItemAsync(player, new PartitionKey(player.Id));
+                await repository.UpsertPlayerAsync(player);
 
                 await UpdateLeaderboardAsync(player.Username);
             }
@@ -208,40 +185,27 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
 
             var guildRegistration = new GuildRegistration
             {
-                Id = command.GuildId.ToString(),
-                ChannelId = command.Channel.Id,
-                ChannelName = command.Channel.Name,
+                Id = command.GuildId.ToString(), ChannelId = command.Channel.Id, ChannelName = command.Channel.Name,
             };
 
-            try
-            {
-                await command.RespondAsync("Registering channel");
-                await _guildContainer.UpsertItemAsync(guildRegistration, new PartitionKey(guildRegistration.Id));
-                
-                var registeredChannel = _discordClient.GetChannel(command.Channel.Id) as IMessageChannel;
-                await registeredChannel.SendMessageAsync("This channel is now registered for leaderboard updates.");
+            await command.RespondAsync("Registering channel");
+            await repository.RegisterLeaderboardChannel(guildRegistration);
 
-            }
-            catch (CosmosException cosmosException)
-            {
-                await command.Channel.SendMessageAsync($"Issue with registration. Contact Donald.");
-            }
+            var registeredChannel = _discordClient.GetChannel(command.Channel.Id) as IMessageChannel;
+            await registeredChannel.SendMessageAsync("This channel is now registered for leaderboard updates.");
         }
     }
 
-    private static async Task UpdateLeaderboardAsync(string username)
+    private async Task UpdateLeaderboardAsync(string username)
     {
-        var guild = _guildContainer.GetItemLinqQueryable<GuildRegistration>(true)
-            .FirstOrDefault();
-        
-        var players = _container.GetItemLinqQueryable<Player>(true)
-            .Where(p => p.HasReceivedIntro)
-            .ToList();
+        var guild = repository.GetGuildRegistration();
 
+        var players = repository.GetPlayers();
         var leaderboard = players
             .Select(p => new
             {
-                username = p.Username, index = Year5.Puzzles.ToList().FindIndex(puzzle => puzzle.Id == p.CurrentPuzzle)
+                username = p.Username,
+                index = Year5.Puzzles.ToList().FindIndex(puzzle => puzzle.Id == p.CurrentPuzzle)
             })
             .GroupBy(x => x.index)
             .OrderDescending();
@@ -252,38 +216,27 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
         foreach (var group in leaderboard)
         {
             stringBuilder.Append($"Puzzle #{group.Key}: ");
-            for(var i = 0; i < group.Count(); i++)
+            for (var i = 0; i < group.Count(); i++)
             {
                 stringBuilder.Append($"{group.ElementAt(i).username}");
-                
-                if(i < group.Count() - 1)
+
+                if (i < group.Count() - 1)
                 {
                     stringBuilder.Append(", ");
                 }
             }
+
             stringBuilder.AppendLine();
         }
-        
+
         if (guild is null)
         {
             //handle error
             return;
         }
-        
-        var registeredChannel = _discordClient.GetChannel(guild.ChannelId) as IMessageChannel;
-        await registeredChannel.SendMessageAsync($"{username} just finished a puzzle! Here's the current leaderboard: {stringBuilder}");
 
-    }
-    
-    private static CosmosClient CreateCosmosClient(string connectionString)
-    {
-        CosmosClient client = new(
-            connectionString: connectionString,
-            new CosmosClientOptions
-            {
-                SerializerOptions = new CosmosSerializationOptions
-                    { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
-            });
-        return client;
+        var registeredChannel = _discordClient.GetChannel(guild.ChannelId) as IMessageChannel;
+        await registeredChannel.SendMessageAsync(
+            $"{username} just finished a puzzle! Here's the current leaderboard: {stringBuilder}");
     }
 }
