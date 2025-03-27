@@ -60,93 +60,103 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
     {
         if (command.CommandName == "submit")
         {
-            await command.RespondAsync($"Processing...");
-
-            var answer = command.Data.Options.FirstOrDefault(x => x.Name == "answer")?.Value.ToString();
-
-            var player = await repository.GetPlayerAsync(command.User.Id.ToString());
-
-            if (player is null)
-            {
-                var correctAnswer = _year5.Puzzles.First()
-                    .Answers.Any(a => string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
-
-                if (correctAnswer)
-                {
-                    await command.Channel.SendMessageAsync(
-                        $"Congratulations! You've completed the first puzzle. Here's your next challenge: {_year5.Puzzles.ToArray()[1].Question}");
-
-                    await repository.UpsertPlayerAsync(new Player
-                    {
-                        Id = command.User.Id.ToString(),
-                        Username = command.User.Username,
-                        CurrentPuzzle = _year5.Puzzles.ToArray()[1].Id,
-                        LastCompletedPuzzle = _year5.Puzzles.ToArray()[0].Id,
-                        HasReceivedIntro = true
-                    });
-
-                    await UpdateLeaderboardAsync(command.User.Username);
-                }
-                else
-                {
-                    await command.Channel.SendMessageAsync($"Not quite, try again!");
-                }
-
-                return;
-            }
-
-            var usersPuzzleId = player.CurrentPuzzle;
-            var currentPuzzle = _year5.Puzzles.First(p => p.Id == usersPuzzleId);
-            var wasAnswerCorrect =
-                currentPuzzle.Answers.Any(a => string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
-
-            if (wasAnswerCorrect)
-            {
-                var indexOfNextPuzzle = _year5.Puzzles.ToList().IndexOf(currentPuzzle) + 1;
-
-                if (indexOfNextPuzzle >= _year5.Puzzles.Count)
-                {
-                    await command.Channel.SendMessageAsync(
-                        $"You are a worthy champion. Donald will be in touch with your prize.");
-                    return;
-                }
-
-                var nextPuzzle = _year5.Puzzles.ToArray()[indexOfNextPuzzle];
-
-                await command.Channel.SendMessageAsync(
-                    $"Excellent job, here's you're next challenge:\n {nextPuzzle.Question}");
-
-                player.CurrentPuzzle = nextPuzzle.Id;
-                player.LastCompletedPuzzle = currentPuzzle.Id;
-
-                await repository.UpsertPlayerAsync(player);
-
-                await UpdateLeaderboardAsync(player.Username);
-            }
-            else
-            {
-                await command.Channel.SendMessageAsync($"Not quite, try again!");
-                return;
-            }
+            await Submit(command);
+            return;
         }
 
         if (command.CommandName == "register")
         {
-            if (command.IsDMInteraction)
+            await RegisterChannel(command);
+        }
+    }
+
+    private async Task Submit(SocketSlashCommand command)
+    {
+        await command.RespondAsync($"Processing...");
+
+        var answer = command.Data.Options.FirstOrDefault(x => x.Name == "answer")?.Value.ToString();
+
+        var player = await repository.GetPlayerAsync(command.User.Id.ToString());
+
+        if (player is null)
+        {
+            var correctAnswer = _year5.Puzzles.First()
+                .Answers.Any(a => string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
+
+            if (correctAnswer)
             {
-                await command.RespondAsync("This command is only to be used in guild channels.");
+                await command.Channel.SendMessageAsync(
+                    $"Congratulations! You've completed the first puzzle. Here's your next challenge: {_year5.Puzzles.ToArray()[1].Question}");
+
+                await repository.UpsertPlayerAsync(new Player
+                {
+                    Id = command.User.Id.ToString(),
+                    Username = command.User.Username,
+                    CurrentPuzzle = _year5.Puzzles.ToArray()[1].Id,
+                    LastCompletedPuzzle = _year5.Puzzles.ToArray()[0].Id,
+                    HasReceivedIntro = true
+                });
+
+                await UpdateLeaderboardAsync(command.User.Username);
+            }
+            else
+            {
+                await command.Channel.SendMessageAsync($"Not quite, try again!");
             }
 
-            var guildRegistration = new GuildRegistration
-            {
-                Id = command.GuildId.ToString(), ChannelId = command.Channel.Id, ChannelName = command.Channel.Name,
-            };
-
-            await command.RespondAsync("Registering channel");
-            await repository.RegisterLeaderboardChannel(guildRegistration);
-
-            await discordClient.SendMessageToChannelAsync(command.Channel.Id, "This channel is now registered for leaderboard updates.");
+            return;
         }
+
+        var usersPuzzleId = player.CurrentPuzzle;
+        var currentPuzzle = _year5.Puzzles.First(p => p.Id == usersPuzzleId);
+        var wasAnswerCorrect =
+            currentPuzzle.Answers.Any(a => string.Equals(a, answer, StringComparison.InvariantCultureIgnoreCase));
+
+        if (wasAnswerCorrect)
+        {
+            var indexOfNextPuzzle = _year5.Puzzles.ToList().IndexOf(currentPuzzle) + 1;
+
+            if (indexOfNextPuzzle >= _year5.Puzzles.Count)
+            {
+                await command.Channel.SendMessageAsync(
+                    $"You are a worthy champion. Donald will be in touch with your prize.");
+                return;
+            }
+
+            var nextPuzzle = _year5.Puzzles.ToArray()[indexOfNextPuzzle];
+
+            await command.Channel.SendMessageAsync(
+                $"Excellent job, here's you're next challenge:\n {nextPuzzle.Question}");
+
+            player.CurrentPuzzle = nextPuzzle.Id;
+            player.LastCompletedPuzzle = currentPuzzle.Id;
+
+            await repository.UpsertPlayerAsync(player);
+
+            await UpdateLeaderboardAsync(player.Username);
+        }
+        else
+        {
+            await command.Channel.SendMessageAsync($"Not quite, try again!");
+        }
+    }
+
+    private async Task RegisterChannel(SocketSlashCommand command)
+    {
+        if (command.IsDMInteraction)
+        {
+            await command.RespondAsync("This command is only to be used in guild channels.");
+        }
+
+        var guildRegistration = new GuildRegistration
+        {
+            Id = command.GuildId.ToString(), ChannelId = command.Channel.Id, ChannelName = command.Channel.Name,
+        };
+
+        await command.RespondAsync("Registering channel");
+        await repository.RegisterLeaderboardChannel(guildRegistration);
+
+        await discordClient.SendMessageToChannelAsync(command.Channel.Id, "This channel is now registered for leaderboard updates.");
     }
 
     private async Task UpdateLeaderboardAsync(string username)
