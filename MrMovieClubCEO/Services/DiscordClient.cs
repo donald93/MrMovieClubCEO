@@ -8,7 +8,7 @@ namespace MrMovieClubCEO.Services;
 
 public class DiscordClient : IDiscordClient
 {
-    private DiscordSocketClient _client;
+    private readonly DiscordSocketClient _client;
     private readonly DiscordOptions _options;
     
     public Func<SocketSlashCommand, Task> SlashCommandHandler { get; set; }
