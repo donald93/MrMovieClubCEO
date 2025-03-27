@@ -93,7 +93,7 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
             // Using the ready event is a simple implementation for the sake of the example. Suitable for testing and development.
             // For a production bot, it is recommended to only run the CreateGlobalApplicationCommandAsync() once for each command.
         }
-        catch (ApplicationCommandException exception)
+        catch (HttpException exception)
         {
             // If our command was invalid, we should catch an ApplicationCommandException. This exception contains the path of the error as well as the error message. You can serialize the Error field in the exception to get a visual of where your error is.
             var json = JsonConvert.SerializeObject(exception.Errors, Formatting.Indented);
@@ -196,7 +196,6 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
             if (command.IsDMInteraction)
             {
                 await command.RespondAsync("This command is only to be used in guild channels.");
-                //reply with error
             }
 
             var guildRegistration = new GuildRegistration
@@ -208,8 +207,11 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
 
             try
             {
+                await command.RespondAsync("Registering channel");
                 await _guildContainer.UpsertItemAsync(guildRegistration, new PartitionKey(guildRegistration.Id));
-                await command.RespondAsync("Registered");
+                
+                var registeredChannel = _discordClient.GetChannel(command.Channel.Id) as IMessageChannel;
+                await registeredChannel.SendMessageAsync("This channel is now registered for leaderboard updates.");
 
             }
             catch (CosmosException cosmosException)
@@ -221,9 +223,23 @@ public class Worker(ILogger<Worker> logger, IServiceProvider services) : Backgro
 
     private async Task UpdateLeaderboard(string username)
     {
-        //TODO
+        var guild = _guildContainer.GetItemLinqQueryable<GuildRegistration>(true)
+            .FirstOrDefault();
+        
+        var players = _container.GetItemLinqQueryable<Player>(true)
+            .Where(p => p.HasReceivedIntro)
+            .ToList();
+
+        if (guild is null)
+        {
+            //handle error
+            return;
+        }
+        
+        var registeredChannel = _discordClient.GetChannel(guild.ChannelId) as IMessageChannel;
+        await registeredChannel.SendMessageAsync("");
+
     }
-    
     
     private static CosmosClient CreateCosmosClient(string connectionString)
     {
