@@ -7,7 +7,7 @@ using IDiscordClient = MrMovieClubCEO.Interfaces.IDiscordClient;
 
 namespace MrMovieClubCEO;
 
-public class Worker(IDiscordClient discordClient, IMovieClubRepository repository)
+public class Worker(IDiscordClient discordClient, IMovieClubRepository repository, ISunsetRepository sunsetRepository)
     : BackgroundService
 {
     private readonly Year5Puzzles _year5 = new();
@@ -44,6 +44,12 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
             "Register the current channel as the channel to post the leaderboard to.");
         applicationCommandProperties.Add(registerChannelCommand.Build());
         
+        var resendClueCommand = new SlashCommandBuilder();
+        resendClueCommand.WithName("resend");
+        resendClueCommand.WithDescription(
+            "Resends the current puzzle in case you forgot. Or maybe it changed?");
+        applicationCommandProperties.Add(resendClueCommand.Build());
+        
         return applicationCommandProperties;
     }
 
@@ -63,10 +69,38 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
             await Submit(command);
             return;
         }
+        
+        if (command.CommandName == "resend")
+        {
+            await WhatIsMyPuzzle(command);
+            return;
+        }
 
         if (command.CommandName == "register")
         {
             await RegisterChannel(command);
+        }
+    }
+
+    private async Task WhatIsMyPuzzle(SocketSlashCommand command)
+    {
+        var player = await repository.GetPlayerAsync(command.User.Id.ToString());
+        
+        var currentPuzzle = _year5.Puzzles.FirstOrDefault(p => p.Id == player.CurrentPuzzle);
+        
+        if (currentPuzzle.Id == "59811583-4c42-49ad-afcf-b286e4adc363")
+        {
+            var sunset = await sunsetRepository.GetSunsetToday();
+
+            var beforeSunset = sunset.AddMinutes(-1);
+
+            await command.Channel.SendMessageAsync(
+                $"Here's the puzzle for you again:\n {beforeSunset}");
+        }
+        else
+        {
+            await command.Channel.SendMessageAsync(
+                $"Here's the puzzle for you again:\n {currentPuzzle.Question}");
         }
     }
 
@@ -125,8 +159,20 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
 
             var nextPuzzle = _year5.Puzzles.ToArray()[indexOfNextPuzzle];
 
-            await command.Channel.SendMessageAsync(
-                $"Excellent job, here's you're next challenge:\n {nextPuzzle.Question}");
+            if (nextPuzzle.Id == "59811583-4c42-49ad-afcf-b286e4adc363")
+            {
+                var sunset = await sunsetRepository.GetSunsetToday();
+                
+                var beforeSunset = sunset.AddMinutes(-2);
+                
+                await command.Channel.SendMessageAsync(
+                    $"Excellent job, here's you're next challenge:\n {beforeSunset}");
+            }
+            else
+            {
+                await command.Channel.SendMessageAsync(
+                    $"Excellent job, here's you're next challenge:\n {nextPuzzle.Question}");
+            }
 
             player.CurrentPuzzle = nextPuzzle.Id;
             player.LastCompletedPuzzle = currentPuzzle.Id;
