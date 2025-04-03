@@ -7,7 +7,7 @@ using IDiscordClient = MrMovieClubCEO.Interfaces.IDiscordClient;
 
 namespace MrMovieClubCEO;
 
-public class Worker(IDiscordClient discordClient, IMovieClubRepository repository, ISunsetRepository sunsetRepository)
+public class Worker(IDiscordClient discordClient, IMovieClubRepository movieClubRepository, ISunsetRepository sunsetRepository)
     : BackgroundService
 {
     private readonly Year5Puzzles _year5 = new();
@@ -15,7 +15,7 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            await repository.InitializeAsync();
+            await movieClubRepository.InitializeAsync();
             
             discordClient.SlashCommandHandler = SlashCommandHandler;
             discordClient.MessageReceivedHandler = MessageReceived;
@@ -53,12 +53,20 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
         return applicationCommandProperties;
     }
 
-    private static async Task MessageReceived(SocketMessage message)
+    private async Task MessageReceived(SocketMessage message)
     {
-        if (message.Channel is IDMChannel && !message.Author.IsBot)
+        var player = await movieClubRepository.GetPlayerAsync(message.Author.Id.ToString());
+
+        if (player is null && message.Channel is IDMChannel && !message.Author.IsBot)
+        {
+                await message.Channel.SendMessageAsync(
+                    $"Ah, hello {message.Author.Username}, welcome to the game! Let’s start things off easy and demonstrate how to submit answers! You’ll use the command `/submit` to officially send in answers. If you’re correct, you’ll be given the next challenge. If you’re not, you’ll be notified. The answers will always be related to a specific movie: the title, an actor, or something else\n\nTo get started, let’s answer a simple question. What is a movie submitted in our current category?");
+            
+        }
+        else if (message.Channel is IDMChannel && !message.Author.IsBot)
         {
             await message.Channel.SendMessageAsync(
-                $"Ah, hello {message.Author.Username}, welcome to the game! Let’s start things off easy and demonstrate how to submit answers! You’ll use the command `/submit` to officially send in answers. If you’re correct, you’ll be given the next challenge. If you’re not, you’ll be notified. The answers will always be related to a specific movie: the title, an actor, or something else\n\nTo get started, let’s answer a simple question. What is a movie submitted in our current category?");
+                "If you're in need of help I'm sure Donald has hints. If you meant to submit, use /submit.");
         }
     }
 
@@ -84,7 +92,7 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
 
     private async Task WhatIsMyPuzzle(SocketSlashCommand command)
     {
-        var player = await repository.GetPlayerAsync(command.User.Id.ToString());
+        var player = await movieClubRepository.GetPlayerAsync(command.User.Id.ToString());
         
         var currentPuzzle = _year5.Puzzles.FirstOrDefault(p => p.Id == player.CurrentPuzzle);
         
@@ -110,7 +118,7 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
 
         var answer = command.Data.Options.FirstOrDefault(x => x.Name == "answer")?.Value.ToString();
 
-        var player = await repository.GetPlayerAsync(command.User.Id.ToString());
+        var player = await movieClubRepository.GetPlayerAsync(command.User.Id.ToString());
 
         if (player is null)
         {
@@ -122,7 +130,7 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
                 await command.Channel.SendMessageAsync(
                     $"Congratulations! You've completed the first puzzle. Here's your next challenge: {_year5.Puzzles.ToArray()[1].Question}");
 
-                await repository.UpsertPlayerAsync(new Player
+                await movieClubRepository.UpsertPlayerAsync(new Player
                 {
                     Id = command.User.Id.ToString(),
                     Username = command.User.Username,
@@ -154,6 +162,8 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
             {
                 await command.Channel.SendMessageAsync(
                     $"You are a worthy champion. Donald will be in touch with your prize.");
+                
+                await AnnounceWinner(player.Username);
                 return;
             }
 
@@ -177,7 +187,7 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
             player.CurrentPuzzle = nextPuzzle.Id;
             player.LastCompletedPuzzle = currentPuzzle.Id;
 
-            await repository.UpsertPlayerAsync(player);
+            await movieClubRepository.UpsertPlayerAsync(player);
 
             await UpdateLeaderboardAsync(player.Username);
         }
@@ -200,16 +210,30 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository repositor
         };
 
         await command.RespondAsync("Registering channel");
-        await repository.RegisterLeaderboardChannel(guildRegistration);
+        await movieClubRepository.RegisterLeaderboardChannel(guildRegistration);
 
         await discordClient.SendMessageToChannelAsync(command.Channel.Id, "This channel is now registered for leaderboard updates.");
     }
 
+    private async Task AnnounceWinner(string username)
+    {
+        var guild = movieClubRepository.GetGuildRegistration();
+
+        if (guild is null)
+        {
+            //handle error
+            return;
+        }
+
+        await discordClient.SendMessageToChannelAsync(guild.ChannelId,
+            $"{username} has completed the game! Congratulations! Thank you to everyone who participated.");
+    }
+    
     private async Task UpdateLeaderboardAsync(string username)
     {
-        var guild = repository.GetGuildRegistration();
+        var guild = movieClubRepository.GetGuildRegistration();
 
-        var players = repository.GetPlayers();
+        var players = movieClubRepository.GetPlayers();
         var leaderboard = players
             .Select(p => new
             {
