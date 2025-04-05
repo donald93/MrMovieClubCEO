@@ -50,7 +50,7 @@ jobs:
           registry-username: ${{ secrets.ACR_USERNAME }}
           registry-password: ${{ secrets.ACR_PASSWORD }}
           name: ${{ env.CONTAINER_NAME }}
-          location: eastus
+          location: westus2
           environment-variables: |
             DOTNET_ENVIRONMENT=Production
           secure-environment-variables: |
