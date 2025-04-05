@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY_NAME: mrmoveclub
+  REGISTRY_NAME: mrmovieclub
   IMAGE_NAME: movieclubceo
   RESOURCE_GROUP: mrmovieclubceo
   CONTAINER_NAME: movieclubceo
