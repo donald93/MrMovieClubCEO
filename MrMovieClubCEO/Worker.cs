@@ -15,13 +15,20 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository movieClub
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            await movieClubRepository.InitializeAsync();
+            Console.WriteLine("Worker starting...");
+            try {
+                await movieClubRepository.InitializeAsync();
             
-            discordClient.SlashCommandHandler = SlashCommandHandler;
-            discordClient.MessageReceivedHandler = MessageReceived;
-            discordClient.Commands = CreateSlashCommands();
+                discordClient.SlashCommandHandler = SlashCommandHandler;
+                discordClient.MessageReceivedHandler = MessageReceived;
+                discordClient.Commands = CreateSlashCommands();
             
-            await discordClient.StartAsync();    
+                await discordClient.StartAsync();   
+                Console.WriteLine("App initialized");
+            } catch (Exception ex) {
+                Console.WriteLine($"Error during startup: {ex}");
+                throw;
+            }
         }
     }
 
