@@ -1,7 +1,7 @@
 ﻿FROM mcr.microsoft.com/dotnet/sdk:8.0-jammy-arm64v8 AS build
 WORKDIR /src
 
-RUN mkdir https
+RUN mkdir -p https
 RUN dotnet dev-certs https -ep /https/aspnetapp.pfx -p "Test1234"
 
 # Copy csproj and restore dependencies
