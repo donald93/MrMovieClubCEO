@@ -6,6 +6,8 @@ using MrMovieClubCEO.Services;
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddHostedService<Worker>();
 
+Console.WriteLine(builder.Configuration.GetDebugView());
+
 var clientSettings = builder.Configuration.GetSection("SunsetApi").Get<SunsetApi>();
 
 builder.Services.AddHttpClient(clientSettings.ClientName, client =>
