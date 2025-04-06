@@ -1,6 +1,8 @@
 ﻿FROM mcr.microsoft.com/dotnet/sdk:8.0-jammy-arm64v8 AS build
 WORKDIR /src
 
+RUN dotnet dev-certs https -ep /https/aspnetapp.pfx -p "Test1234"
+
 # Copy csproj and restore dependencies
 COPY ["MrMovieClubCEO/*.csproj", "MrMovieClubCEO/"]
 RUN dotnet restore "MrMovieClubCEO/MrMovieClubCEO.csproj"
@@ -21,6 +23,7 @@ FROM debian:bookworm-slim AS final
 WORKDIR /app
 RUN apt-get update && apt-get install -y libicu-dev && rm -rf /var/lib/apt/lists/*
 COPY --from=publish /app/publish .
+COPY --chmod=0755 --from=publish /https/* /https/
 
 # Create a directory for configuration files
 RUN mkdir -p /app/config
