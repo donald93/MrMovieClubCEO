@@ -27,7 +27,6 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository movieClub
                 Console.WriteLine("App initialized");
             } catch (Exception ex) {
                 Console.WriteLine($"Error during startup: {ex}");
-                throw;
             }
         }
     }
