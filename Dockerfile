@@ -1,4 +1,4 @@
-﻿FROM mcr.microsoft.com/dotnet/sdk:9.0.202-bookworm-slim-arm64v8  AS build
+﻿FROM mcr.microsoft.com/dotnet/sdk:8.0-jammy-arm64v8 AS build
 WORKDIR /src
 
 # Copy csproj and restore dependencies
@@ -12,17 +12,18 @@ WORKDIR "/src/MrMovieClubCEO"
 # Build the application
 RUN dotnet build "MrMovieClubCEO.csproj" -c Release -o /app/build
 
-# Publish the application
+# Publish the application as self-contained
 FROM build AS publish
-RUN dotnet publish "MrMovieClubCEO.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "MrMovieClubCEO.csproj" -c Release -o /app/publish -r linux-arm64 --self-contained true
 
-# Final image
-FROM mcr.microsoft.com/dotnet/runtime:9.0.202-bookworm-slim-arm64v8  AS final
+# Final image - use a minimal base image since we're including the .NET runtime
+FROM debian:bookworm-slim AS final
 WORKDIR /app
+RUN apt-get update && apt-get install -y libicu-dev && rm -rf /var/lib/apt/lists/*
 COPY --from=publish /app/publish .
 
 # Create a directory for configuration files
 RUN mkdir -p /app/config
 
-# Set the entry point for the application
-ENTRYPOINT ["dotnet", "MrMovieClubCEO.dll"]
+# Set the entry point for the application (using the native executable)
+ENTRYPOINT ["/app/MrMovieClubCEO"]
