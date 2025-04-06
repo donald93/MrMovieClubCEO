@@ -1,58 +1,28 @@
-﻿name: Deploy to Azure Container Instances
+﻿name: Build and Deploy to K8s
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ main ]
 
 env:
-  REGISTRY_NAME: mrmovieclubceo
+  REGISTRY_NAME: mcpartlandhomekit
   IMAGE_NAME: movieclubceo
-  RESOURCE_GROUP: mrmovieclubceo
-  CONTAINER_NAME: movieclubceo
-  DNS_NAME: mrmovieclubdns
+  IMAGE_TAG: ${{ github.sha }}
+  RESOURCE_GROUP: homekit
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: Production
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Login to Azure
+      - name: Azure login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Login to Azure Container Registry
-        uses: azure/docker-login@v1
-        with:
-          login-server: ${{ env.REGISTRY_NAME }}.azurecr.io
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }},${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
-
-      - name: Deploy to Azure Container Instances
-        uses: azure/aci-deploy@v1
-        with:
-          resource-group: ${{ env.RESOURCE_GROUP }}
-          dns-name-label: ${{ env.DNS_NAME }}
-          image: ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          registry-login-server: ${{ env.REGISTRY_NAME }}.azurecr.io
-          registry-username: ${{ secrets.ACR_USERNAME }}
-          registry-password: ${{ secrets.ACR_PASSWORD }}
-          name: ${{ env.CONTAINER_NAME }}
-          location: westus2
-          environment-variables: |
-            DOTNET_ENVIRONMENT=Production
-          secure-environment-variables: |
-            CosmosDb__ConnectionString=${{ secrets.COSMOS_DB_CONNECTION_STRING }}
-            Discord__Token=${{ secrets.DISCORD_TOKEN }}
+      - name: Build and push image to ACR
+        run: |
+          az acr login --name ${{ env.REGISTRY_NAME }}
+          docker build -t ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+          docker push ${{ env.REGISTRY_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
