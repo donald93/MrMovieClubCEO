@@ -1,6 +1,8 @@
 ﻿FROM mcr.microsoft.com/dotnet/sdk:8.0-jammy-arm64v8 AS build
 WORKDIR /src
 
+RUN update-ca-certificates
+
 # Copy csproj and restore dependencies
 COPY ["MrMovieClubCEO/*.csproj", "MrMovieClubCEO/"]
 RUN dotnet restore "MrMovieClubCEO/MrMovieClubCEO.csproj"
