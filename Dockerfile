@@ -1,8 +1,6 @@
 ﻿FROM mcr.microsoft.com/dotnet/sdk:8.0-jammy-arm64v8 AS build
 WORKDIR /src
 
-RUN update-ca-certificates
-
 # Copy csproj and restore dependencies
 COPY ["MrMovieClubCEO/*.csproj", "MrMovieClubCEO/"]
 RUN dotnet restore "MrMovieClubCEO/MrMovieClubCEO.csproj"
@@ -26,6 +24,8 @@ COPY --from=publish /app/publish .
 
 # Create a directory for configuration files
 RUN mkdir -p /app/config
+
+RUN update-ca-certificates
 
 # Set the entry point for the application (using the native executable)
 ENTRYPOINT ["/app/MrMovieClubCEO"]
