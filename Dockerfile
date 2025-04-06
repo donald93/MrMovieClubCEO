@@ -1,4 +1,4 @@
-﻿FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+﻿FROM mcr.microsoft.com/dotnet/sdk:8.0-jammy-arm64v8  AS build
 WORKDIR /src
 
 # Copy csproj and restore dependencies
@@ -17,7 +17,7 @@ FROM build AS publish
 RUN dotnet publish "MrMovieClubCEO.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # Final image
-FROM mcr.microsoft.com/dotnet/runtime:8.0 AS final
+FROM mcr.microsoft.com/dotnet/runtime:8.0-jammy-arm64v8  AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 
