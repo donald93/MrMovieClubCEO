@@ -247,7 +247,7 @@ public class Worker(IDiscordClient discordClient, IMovieClubRepository movieClub
                 index = _year5.Puzzles.ToList().FindIndex(puzzle => puzzle.Id == p.CurrentPuzzle)
             })
             .GroupBy(x => x.index)
-            .OrderDescending();
+            .OrderByDescending(x => x.Key);
 
         var stringBuilder = new StringBuilder();
         stringBuilder.AppendLine();
